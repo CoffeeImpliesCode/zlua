@@ -1,0 +1,22 @@
+# Match both generated directories and symlinks, at every package depth.
+.zig-cache
+.zig-global-cache
+zig-cache
+zig-pkg
+zig-out
+
+# Jujutsu, devenv and direnv state.
+.jj
+.devenv
+.direnv
+devenv.local.nix
+devenv.local.yaml
+
+# Generated test and coverage evidence.
+coverage
+*.zcov
+*.o
+*.obj
+*.core
+core
+codedb.snapshot

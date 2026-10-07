@@ -1,0 +1,287 @@
+name: Runtime integration
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+
+env:
+  ZIG_VERSION: 0.16.0
+  GIT_TERMINAL_PROMPT: '0'
+
+jobs:
+  native:
+    name: Native ${{ matrix.os }} / ${{ matrix.backend }} / ${{ matrix.optimize }} / ${{ matrix.linkage }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-14]
+        backend: [lua, luajit]
+        optimize: [Debug, ReleaseSafe, ReleaseFast, ReleaseSmall]
+        linkage: [static, dynamic]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - &credential
+        name: Require private dependency read-only token
+        shell: bash
+        env:
+          DEPENDENCY_TOKEN: ${{ secrets.ZLUA_DEPENDENCIES_TOKEN }}
+        run: |
+          if [[ -z "$DEPENDENCY_TOKEN" ]]; then
+            echo '::error::Missing ZLUA_DEPENDENCIES_TOKEN. Supply a read-only contents token authorized for CoffeeImpliesCode/lua and CoffeeImpliesCode/luajit. Fork PRs cannot access this secret.'
+            exit 1
+          fi
+      - &lua
+        name: Check out immutable private Lua source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: CoffeeImpliesCode/lua
+          ref: 5342c6165ee19b55e434f450e428cf9678a8f9b1
+          token: ${{ secrets.ZLUA_DEPENDENCIES_TOKEN }}
+          persist-credentials: false
+          path: .ci-deps/lua
+      - &luajit
+        name: Check out immutable private LuaJIT source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: CoffeeImpliesCode/luajit
+          ref: 77549354eafa3a467fd30d8410b68bf9393b8dcf
+          token: ${{ secrets.ZLUA_DEPENDENCIES_TOKEN }}
+          persist-credentials: false
+          path: .ci-deps/luajit
+      - &zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Place Windows package caches outside the checkout
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $target = Join-Path $env:RUNNER_TEMP "zlua-zig-pkg"
+          New-Item -ItemType Directory -Path $target -Force | Out-Null
+          foreach ($relative in @("zig-pkg", "consumer/smoke/zig-pkg", "consumer/libffi/zig-pkg", "consumer/wasm/zig-pkg", "consumer/conformance/zig-pkg")) {
+            $path = Join-Path $env:GITHUB_WORKSPACE $relative
+            if (Test-Path -LiteralPath $path) { throw "Unexpected existing package cache: $path" }
+            New-Item -ItemType Junction -Path $path -Target $target | Out-Null
+          }
+      - &prime
+        name: Prime Zig packages and verify manifest hashes
+        shell: bash
+        run: |
+          cache="$RUNNER_TEMP/zlua-zig-global"
+          local_cache="$RUNNER_TEMP/zlua-zig-local"
+          packages="$RUNNER_TEMP/zlua-zig-pkg"
+          mkdir -p "$cache" "$local_cache" "$packages"
+          if [[ "$RUNNER_OS" != Windows ]]; then
+            for package_root in . consumer/smoke consumer/libffi consumer/wasm consumer/conformance; do
+              if [[ -e "$package_root/zig-pkg" || -L "$package_root/zig-pkg" ]]; then
+                echo "::error::Unexpected existing package cache: $package_root/zig-pkg"
+                exit 1
+              fi
+              ln -s "$packages" "$package_root/zig-pkg"
+            done
+          fi
+          printf 'ZIG_GLOBAL_CACHE_DIR=%s\nZIG_LOCAL_CACHE_DIR=%s\n' "$cache" "$local_cache" >> "$GITHUB_ENV"
+          export ZIG_GLOBAL_CACHE_DIR="$cache" ZIG_LOCAL_CACHE_DIR="$local_cache"
+          hash_pattern='^[[:space:]]*\.hash[[:space:]]*=[[:space:]]*"([^"]+)",[[:space:]]*$'
+          for backend in lua luajit; do
+            actual=$(zig fetch ".ci-deps/$backend")
+            expected=
+            while IFS= read -r line; do
+              if [[ "$line" =~ $hash_pattern ]]; then
+                candidate=${BASH_REMATCH[1]}
+                if [[ "$candidate" == "$backend-"* ]]; then expected=$candidate; fi
+              fi
+            done < build.zig.zon
+            if [[ -z "$expected" || "$actual" != "$expected" ]]; then
+              echo "::error::Immutable $backend checkout hash differs from build.zig.zon: expected=$expected actual=$actual"
+              exit 1
+            fi
+          done
+      - name: Compile selected native backend
+        shell: bash
+        run: zig build check -Dbackend=${{ matrix.backend }} -Doptimize=${{ matrix.optimize }} -Dlinkage=${{ matrix.linkage }} --summary all
+      - name: Execute shared real-runtime integration tests
+        shell: bash
+        run: zig build test -Dbackend=${{ matrix.backend }} -Doptimize=${{ matrix.optimize }} -Dlinkage=${{ matrix.linkage }} --summary all
+      - name: Execute package smoke
+        shell: bash
+        run: zig build smoke -Dbackend=${{ matrix.backend }} -Doptimize=${{ matrix.optimize }} -Dlinkage=${{ matrix.linkage }} --summary all
+      - name: Compile separate dependency consumer
+        working-directory: consumer/smoke
+        shell: bash
+        run: zig build check -Dbackend=${{ matrix.backend }} -Doptimize=${{ matrix.optimize }} -Dlinkage=${{ matrix.linkage }} --summary all
+      - name: Execute separate dependency consumer
+        working-directory: consumer/smoke
+        shell: bash
+        run: zig build run -Dbackend=${{ matrix.backend }} -Doptimize=${{ matrix.optimize }} -Dlinkage=${{ matrix.linkage }} --summary all
+      - name: Compile Lua and pinned libffi consumer
+        working-directory: consumer/libffi
+        shell: bash
+        run: zig build check -Dbackend=${{ matrix.backend }} -Doptimize=${{ matrix.optimize }} -Dlinkage=${{ matrix.linkage }} --summary all
+      - name: Execute libffi call and closure integration
+        working-directory: consumer/libffi
+        shell: bash
+        run: zig build test run -Dbackend=${{ matrix.backend }} -Doptimize=${{ matrix.optimize }} -Dlinkage=${{ matrix.linkage }} --summary all
+
+  conformance:
+    name: Full Lua 5.5.1 conformance / ${{ matrix.optimize }} / ${{ matrix.linkage }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        optimize: [Debug, ReleaseSafe, ReleaseFast, ReleaseSmall]
+        linkage: [static, dynamic]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - *credential
+      - *lua
+      - *luajit
+      - *zig
+      - *prime
+      - name: Prepare full-suite readline, locale, and local scratch
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreadline-dev locales
+          locales="$RUNNER_TEMP/zlua-locales"
+          scratch="$RUNNER_TEMP/zlua-conformance-tmp"
+          mkdir -p "$locales" "$scratch"
+          localedef --no-archive -i pt_BR -f ISO-8859-1 "$locales/pt_BR"
+          printf 'LOCPATH=%s\nTMPDIR=%s\nTMP=%s\nTEMP=%s\n' "$locales" "$scratch" "$scratch" "$scratch" >> "$GITHUB_ENV"
+      - name: Execute untouched full upstream suite with internal tests and shared fixtures
+        working-directory: consumer/conformance
+        shell: bash
+        run: zig build run -Doptimize=${{ matrix.optimize }} -Dlinkage=${{ matrix.linkage }} --summary all
+
+  cross:
+    name: Compile only ${{ matrix.backend }} / ${{ matrix.target }} / ${{ matrix.optimize }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [lua, luajit]
+        optimize: [Debug, ReleaseSafe]
+        target:
+          - x86_64-linux-gnu
+          - x86_64-linux-gnu.2.28
+          - aarch64-linux-gnu
+          - x86_64-linux-musl
+          - aarch64-linux-musl
+          - x86_64-windows-gnu
+          - x86_64-macos
+          - aarch64-macos
+        include:
+          - { backend: lua, optimize: Debug, target: riscv64-linux-musl }
+          - { backend: lua, optimize: ReleaseSafe, target: riscv64-linux-musl }
+          - { backend: lua, optimize: Debug, target: riscv64-linux-gnu }
+          - { backend: lua, optimize: ReleaseSafe, target: riscv64-linux-gnu }
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - *credential
+      - *lua
+      - *luajit
+      - *zig
+      - *prime
+      - name: Compile shared tests and package smoke without execution
+        shell: bash
+        run: zig build check -Dbackend=${{ matrix.backend }} -Dtarget=${{ matrix.target }} -Doptimize=${{ matrix.optimize }} --summary all
+      - name: Compile dependency consumer without execution
+        working-directory: consumer/smoke
+        shell: bash
+        run: zig build check -Dbackend=${{ matrix.backend }} -Dtarget=${{ matrix.target }} -Doptimize=${{ matrix.optimize }} --summary all
+      - name: Compile pinned libffi integration without execution
+        working-directory: consumer/libffi
+        shell: bash
+        run: zig build check -Dbackend=${{ matrix.backend }} -Dtarget=${{ matrix.target }} -Doptimize=${{ matrix.optimize }} --summary all
+      - name: Report honest coverage
+        shell: bash
+        run: echo 'build_only backend=${{ matrix.backend }} target=${{ matrix.target }}; no foreign runtime execution claimed.'
+
+  unsupported:
+    name: Reject unsupported ${{ matrix.backend }} / ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { backend: lua, target: wasm32-wasi }
+          - { backend: luajit, target: wasm32-wasi }
+          - { backend: luajit, target: riscv64-linux-musl }
+          - { backend: luajit, target: wasm32-emscripten }
+          - { backend: luajit, target: wasm64-emscripten }
+          - { backend: luajit, target: wasm32-freestanding }
+          - { backend: luajit, target: wasm64-freestanding }
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - *credential
+      - *lua
+      - *luajit
+      - *zig
+      - *prime
+      - name: Require explicit unsupported-target diagnostic
+        shell: bash
+        run: |
+          set +e
+          output=$(zig build check -Dbackend=${{ matrix.backend }} -Dtarget=${{ matrix.target }} --summary all 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $status -eq 0 ]]; then
+            echo '::error::Unsupported target unexpectedly compiled.'
+            exit 1
+          fi
+          if [[ "$output" != *'zlua: unsupported target'* ]]; then
+            echo '::error::Build failed for an unrelated reason; expected zlua unsupported-target diagnostic.'
+            exit 1
+          fi
+
+  wasm:
+    name: Execute Emscripten Lua / ${{ matrix.optimize }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        optimize: [Debug, ReleaseSafe]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - *credential
+      - *lua
+      - *luajit
+      - *zig
+      - *prime
+      - name: Check out immutable Emscripten SDK installer
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: emscripten-core/emsdk
+          ref: 5eb0bde7585670252e8ba05e9d361627bffd08b5
+          path: .ci-deps/emsdk
+          persist-credentials: false
+      - name: Install Emscripten 6.0.9 outside the checkout
+        shell: bash
+        run: |
+          sdk="$RUNNER_TEMP/zlua-emsdk"
+          cp -R .ci-deps/emsdk "$sdk"
+          mkdir -p "$RUNNER_TEMP/zlua-tmp" "$RUNNER_TEMP/zlua-em-cache"
+          export TMPDIR="$RUNNER_TEMP/zlua-tmp" TMP="$RUNNER_TEMP/zlua-tmp" TEMP="$RUNNER_TEMP/zlua-tmp"
+          export EM_CACHE="$RUNNER_TEMP/zlua-em-cache"
+          "$sdk/emsdk" install 6.0.9
+          "$sdk/emsdk" activate 6.0.9
+          source "$sdk/emsdk_env.sh"
+          # emsdk's environment script clears EM_CACHE. Restore the local cache.
+          export EM_CACHE="$RUNNER_TEMP/zlua-em-cache"
+          dirname "$(command -v emcc)" >> "$GITHUB_PATH"
+          printf 'EM_CONFIG=%s\nEM_CACHE=%s\nTMPDIR=%s\nTMP=%s\nTEMP=%s\n' \
+            "$sdk/.emscripten" "$EM_CACHE" "$TMPDIR" "$TMP" "$TEMP" >> "$GITHUB_ENV"
+          embuilder build libc
+      - name: Build and execute real Lua wasm with Node
+        working-directory: consumer/wasm
+        shell: bash
+        run: zig build run -Doptimize=${{ matrix.optimize }} -Demscripten-sysroot="$EM_CACHE/sysroot" --summary all
+      - name: Execute Lua/libffi wasm calls, 64-bit ABI and protected callbacks
+        working-directory: consumer/libffi
+        shell: bash
+        run: zig build test run -Dtarget=wasm32-emscripten -Doptimize=${{ matrix.optimize }} -Demscripten-sysroot="$EM_CACHE/sysroot" --summary all

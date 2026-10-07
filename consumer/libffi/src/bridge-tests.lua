@@ -1,0 +1,6 @@
+assert(ffi_bridge(-7, 1.5) == -59.5, 'protected Lua callback mixed ABI')
+local value, message = ffi_bridge(999, 0)
+assert(value == nil and message == 'protected bridge error', 'callback error stays inside protected Lua call')
+assert(ffi_bridge(2, 0.25) == -33.75, 'callback recovers after protected error')
+collectgarbage('collect')
+assert(ffi_bridge(-1, 1) == -42, 'registry-rooted Lua callback survives GC')

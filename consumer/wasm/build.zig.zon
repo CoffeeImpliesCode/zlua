@@ -1,0 +1,8 @@
+.{
+    .name = .zlua_wasm_consumer,
+    .fingerprint = 0xfa55a9da0ce66a60,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{ .zlua = .{ .path = "../.." } },
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+}
