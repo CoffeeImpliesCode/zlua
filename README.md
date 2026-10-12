@@ -4,7 +4,7 @@
 Use `zlua.native` for the selected upstream Zig SDK and `zlua.c` for its C bindings.
 The SDK supplies the native library. Do not link or build a second copy.
 
-Use **Zig 0.16.0**. The development shell and CI select it. The manifest minimum is `0.16.0`.
+Use **Zig 0.17.0**. The development shell and CI select it. The manifest minimum is `0.17.0`.
 Later Zig versions are not covered.
 
 ## Runtime pins
@@ -13,8 +13,10 @@ Both source repositories are private. The manifest uses immutable `git+https` re
 
 | Backend | Source repository | Runtime version | Revision |
 | --- | --- | --- | --- |
-| `lua` | [CoffeeImpliesCode/lua](https://github.com/CoffeeImpliesCode/lua) | Lua 5.5.1 | `5342c6165ee19b55e434f450e428cf9678a8f9b1` |
-| `luajit` | [CoffeeImpliesCode/luajit](https://github.com/CoffeeImpliesCode/luajit) | LuaJIT 2.1.1788856981 | `77549354eafa3a467fd30d8410b68bf9393b8dcf` |
+| `lua` | [CoffeeImpliesCode/lua](https://github.com/CoffeeImpliesCode/lua) | Lua 5.5.1 | `bde3a070943d5faa03aef1bb143e01a0efe5f837` |
+| `luajit` | [CoffeeImpliesCode/luajit](https://github.com/CoffeeImpliesCode/luajit) | LuaJIT 2.1.1788856981 | `6cfaae21afbe113c5310f40495cc15add1e38d68` |
+
+These are the approved `zig-0.17` fork commits. Runtime versions and the common API are unchanged.
 
 `-Dbackend=lua|luajit` selects one runtime. The default is `lua`.
 `-Dlinkage=static|dynamic` selects native linkage. The default is `static`.
@@ -33,8 +35,7 @@ gh repo clone CoffeeImpliesCode/zlua
 cd zlua
 ```
 
-Zig 0.16's private HTTPS fetch does not use Git credential helpers, even after a successful `gh repo clone`.
-Prime the dependency cache before a build:
+Private HTTPS fetches require authenticated dependency acquisition. Prime the package cache with the helper:
 ```sh
 
 if [ -r "$HOME/.local/lib/host-scratch.sh" ]; then
@@ -47,12 +48,16 @@ if [ -z "${ZLUA_SCRATCH_ROOT:-}" ]; then
 fi
 export ZIG_GLOBAL_CACHE_DIR="$ZLUA_SCRATCH_ROOT/zlua-zig-global"
 export ZIG_LOCAL_CACHE_DIR="$ZLUA_SCRATCH_ROOT/zlua-zig-local"
+export ZIG_LOCAL_PKG_DIR="$ZLUA_SCRATCH_ROOT/zlua-zig-pkg"
 bash tools/fetch-deps.sh
 ```
 
 Without the host helper, set `ZLUA_SCRATCH_ROOT` to an existing, absolute, UID-owned local scratch directory.
 Do not use `/tmp`, `/var/tmp`, a network filesystem, or the checkout for scratch or caches.
-The helper downloads private archives through `gh`, fetches public dependencies, checks manifest hashes, and connects the package caches.
+The helper downloads private archives through `gh`, fetches public dependencies, and checks manifest hashes.
+Zig 0.17 uses the explicit `ZIG_LOCAL_PKG_DIR`; legacy checkout `zig-pkg` links are neither needed nor changed.
+It unpacks verified sources through `zig fetch --save-exact` in a scratch-only copy
+of the manifest; the repository's immutable git URLs are never rewritten.
 Use the cache exports it prints for subsequent builds.
 To prime only one runtime, run `bash tools/fetch-deps.sh lua` or `bash tools/fetch-deps.sh luajit`.
 `integration` primes four dependencies: Lua, LuaJIT, libffi, and the official Lua test suite.
@@ -78,7 +83,7 @@ fi
 ```
 
 The `.envrc` performs this setup automatically. Use the host's `~/.local/bin/devenv` wrapper when available.
-The shell supplies Zig 0.16.0, Jujutsu, Git, GitHub CLI, Emscripten, Node, and glibc locales.
+The shell supplies stock Zig 0.17.0 from a pinned nixos-unstable input, Jujutsu, Git, GitHub CLI, Emscripten, Node, and glibc locales.
 It sets tools and local caches but does not fetch dependencies or build SDKs.
 
 The shell sources the host scratch helper when available and preserves caller cache settings.
@@ -102,9 +107,11 @@ In the consumer's `build.zig.zon`, point to your local checkout:
 
 ```zig
 .dependencies = .{
-    .zlua = .{ .path = "../zlua" },
+    .zlua = .{ .path = "zlua" },
 },
 ```
+Zig 0.17 requires path dependencies to remain inside the consumer project. Place or
+symlink the checkout at `zlua` inside that project; a sibling `../zlua` path is rejected.
 
 In the consumer's `build.zig`, pass the selected options and add only the `zlua` module:
 
@@ -257,6 +264,17 @@ The revision is `58673112b522a80232071653a8d0173d2fdcf7e3` (libffi 3.8.0).
 This is tag `v3.8.0-1`, not the older unsuffixed `v3.8.0` tag.
 It is a test-consumer dependency, not a dependency of the public `zlua` module.
 
+**Known Zig 0.17 blocker:** this immutable libffi SDK pin does not build unchanged.
+Its `build.zig:26` passes string paths to `Fmt.Options.paths`, which now expects
+`Build.LazyPath` (`error: expected type 'Build.LazyPath', found '*const [9:0]u8'`).
+After adapting those paths, `build.zig:262` fails with
+`error: operator > not allowed for type '?u16'`: C ABI byte/bit sizes are now optional.
+The binding's C ABI size selectors also need optional-value handling.
+The Lua/LuaJIT module, package tests, and smoke consumer do not depend on libffi.
+Native and wasm libffi consumers were proved with a scratch-only local port;
+the libffi fork was deliberately not pushed or repinned. The published libffi
+consumer and CI jobs that include it remain blocked until that SDK is ported.
+
 ```sh
 bash tools/fetch-deps.sh integration
 for backend in lua luajit; do
@@ -300,8 +318,8 @@ When a wrapper removes environment variables, set them inside its shell.
 
 The wasm program checks tables, sorting, loops, libraries, binary strings, Zig callbacks, protected errors, stack prefixes, results, and recovery.
 Lua's C objects use wasm exception handling and SjLj. The emcc link needs `-sSUPPORT_LONGJMP=wasm` for precompiled Zig C objects.
-The consumer applies skript's Zig 0.16 `STOPSIG` return-type fix to a private stdlib copy in the build cache.
-The installed compiler stays unchanged. Debug uses emcc `-g2` names because Binaryen 132 rejects the observed Zig 0.16 DWARF records.
+The consumer uses the stock Zig 0.17 standard library, which fixes the earlier `STOPSIG` return type.
+Debug uses emcc `-g2` names to avoid Binaryen's unsupported DWARF metadata.
 Debug and ReleaseSafe retain UBSan, Emscripten assertions, and stack-overflow checks.
 
 The libffi consumer uses static Lua and a private adapter for upstream libffi's C wasm implementation.
@@ -327,7 +345,7 @@ Other target behavior depends on the selected upstream SDK. This package does no
 
 ### CI declaration and private access
 
-[The workflow](.github/workflows/ci.yml) declares these checks with Zig 0.16.0:
+[The workflow](.github/workflows/ci.yml) declares these checks with Zig 0.17.0:
 
 | Job | Declared configurations | Scope |
 | --- | ---: | --- |
@@ -341,7 +359,18 @@ Cross targets cover x86_64 Linux glibc (including 2.28) and musl, aarch64 Linux 
 Lua-only riscv64 entries cover Linux glibc and musl.
 These counts describe workflow configuration, not completed runs or verified platform support.
 
-Observed local checks:
+Local Zig 0.17.0 checks on Linux x86_64 glibc 2.39:
+
+- Package `check test smoke` and dependency consumer `check run`: both backends, Debug and ReleaseSafe, static and dynamic linkage (eight configurations, 18 package tests in each).
+- The final package/consumer matrix used the pushed SDK commits and isolated package/global caches initialized empty, with no local-fork overrides: all 16 commands succeeded after authenticated archive priming and hash verification.
+- Official conformance `check run`: four optimization/linkage configurations, each exiting zero with `final OK !!!`; Debian bookworm Dash 0.5.12-2 was isolated as `/bin/sh`, without modifying the host or suite. Only the documented official `%a` fallback omission was accepted.
+- Node: both wasm consumers ran in Debug and ReleaseSafe using Emscripten 6.0.9 and Node 24.21.0. The libffi consumer used the scratch-only port described above.
+- Native libffi `check test run`: both backends, Debug and ReleaseSafe, both linkages, with that scratch-only port.
+- Lua SDK: 20 tests per mode; LuaJIT SDK: 29 per mode, native CLI self-checks and installed-header assertions. Both SDKs also passed explicit-provider runtime-loaded tests, smoke and separate consumers in both modes. Upstream source-integrity checks passed.
+
+These are local results, not GitHub Actions, browser, foreign-platform, or Nix derivation verification.
+
+Historical local checks with Zig 0.16.0 (not Zig 0.17 verification):
 
 - Native libffi: 16 Linux x86_64 configurations, covering both backends, four optimization modes, and both linkage modes.
 - Conformance: eight optimization/linkage configurations and the devenv task passed with isolated Debian bookworm Dash 0.5.12-2.

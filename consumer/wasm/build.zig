@@ -21,7 +21,6 @@ pub fn build(b: *std.Build) void {
     const library = b.addLibrary(.{
         .name = "zlua-wasm-scenario",
         .linkage = .static,
-        .zig_lib_dir = emscripten.prepareZigLib(b),
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,

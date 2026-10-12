@@ -7,7 +7,7 @@ pub const Result = struct {
 
 // The pinned SDK does not select its existing wasm C backend or declare its
 // wasm Zig layouts. Keep native SDK builds untouched and supply only that gap.
-pub fn create(b: *std.Build, comptime emscripten: type, dependency: *std.Build.Dependency, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sysroot: []const u8) Result {
+pub fn create(b: *std.Build, comptime emscripten: type, dependency: *std.Build.Dependency, target: std.Build.ResolvedTarget, optimize: std.lang.Optimize, sysroot: []const u8) Result {
     const ffi_h = b.addConfigHeader(.{
         .style = .{ .cmake = dependency.path("include/ffi.h.in") },
         .include_path = "ffi.h",
@@ -101,9 +101,11 @@ pub fn create(b: *std.Build, comptime emscripten: type, dependency: *std.Build.D
 
     // Preserve all pinned binding implementations. Add only the missing target
     // selector and layouts in a generated cache copy, never the package cache.
+    b.dependOnFileContents(dependency.path("lib/ffi.zig"));
+    const source_path = dependency.builder.root.joinString(b.allocator, "lib/ffi.zig") catch @panic("OOM");
     const source = std.Io.Dir.cwd().readFileAlloc(
         b.graph.io,
-        dependency.path("lib/ffi.zig").getPath(b),
+        source_path,
         b.allocator,
         .limited(1 << 24),
     ) catch @panic("zlua libffi: cannot read pinned bindings");

@@ -1,15 +1,15 @@
 const std = @import("std");
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const linkage = b.option(std.builtin.LinkMode, "linkage", "Instrumented Lua linkage") orelse .static;
+    const linkage = b.option(std.lang.LinkMode, "linkage", "Instrumented Lua linkage") orelse .static;
     const backend = b.option(enum { lua, luajit }, "backend", "Official suite runtime (Lua only)") orelse .lua;
     if (backend != .lua) @panic("conformance: the official Lua 5.5.1 suite cannot run on LuaJIT");
     if (target.result.os.tag != .linux) @panic("conformance: full official tests require Linux, POSIX shell, and ELF .so fixtures");
 
     // Lazy resolution keeps rejected backends/targets from fetching the suite.
-    const suite = b.lazyDependency("lua_tests", .{}) orelse return;
+    const suite = try b.dependencyLazy("lua_tests", .{});
     const zlua_dep = b.dependency("zlua", .{
         .target = target,
         .optimize = optimize,
@@ -17,11 +17,11 @@ pub fn build(b: *std.Build) void {
         .linkage = linkage,
     });
     const zlua_module = zlua_dep.module("zlua");
-    const sdk = zlua_dep.builder.lazyDependency("lua", .{
+    const sdk = try zlua_dep.builder.dependencyLazy("lua", .{
         .target = target,
         .optimize = optimize,
         .linkage = linkage,
-    }) orelse return;
+    });
     const native = zlua_module.import_table.get("native").?;
     const archive = libraryArtifact(native);
     const cli = interpreterArtifact(sdk.builder);
@@ -55,7 +55,8 @@ pub fn build(b: *std.Build) void {
     configureTemporaryNames(b, archive.root_module);
     configureTemporaryNames(b, cli.root_module);
     const bindings = native.import_table.get("c").?;
-    const translation = bindings.root_source_file.?.generated.file.step.cast(std.Build.Step.TranslateC).?;
+    const translation_step = b.graph.generated_files.items[@backingInt(bindings.root_source_file.?.generated.index)];
+    const translation = translation_step.cast(std.Build.Step.TranslateC).?;
     translation.addIncludePath(test_headers);
     translation.defineCMacro("LUA_USER_H", "\"ltests.h\"");
     // Do not translate luaL_newstate's allocator macro into an SDK replacement.
@@ -93,7 +94,7 @@ pub fn build(b: *std.Build) void {
             .linkage = .dynamic,
             .root_module = b.createModule(.{
                 .target = target,
-                .optimize = .ReleaseFast,
+                .optimize = .fast,
                 .link_libc = true,
                 .pic = true,
             }),
@@ -143,7 +144,8 @@ fn configureTemporaryNames(b: *std.Build, module: *std.Build.Module) void {
     // run.sh enters a fresh approved scratch directory before any suite code.
     // Leaf names preserve the CLI -l module-name tests (hyphens mean versions).
     module.addCMacro("LUA_TMPNAMTEMPLATE", "\"lua_XXXXXX\"");
-    const flags: []const []const u8 = &.{ "-include", b.path("src/tempnam.h").getPath(b) };
+    const header = b.root.joinString(b.allocator, "src/tempnam.h") catch @panic("OOM");
+    const flags: []const []const u8 = &.{ "-include", header };
     for (module.link_objects.items) |object| switch (object) {
         .c_source_files => |sources| {
             sources.flags = std.mem.concat(b.allocator, []const u8, &.{ sources.flags, flags }) catch @panic("OOM");

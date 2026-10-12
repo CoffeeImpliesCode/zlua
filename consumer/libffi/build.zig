@@ -3,11 +3,11 @@ const wasm_ffi = @import("wasm-libffi.zig");
 
 const Backend = enum { lua, luajit };
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     var target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const backend = b.option(Backend, "backend", "Lua runtime") orelse .lua;
-    const linkage = b.option(std.builtin.LinkMode, "linkage", "Native library linkage") orelse .static;
+    const linkage = b.option(std.lang.LinkMode, "linkage", "Native library linkage") orelse .static;
 
     const is_wasm = target.result.cpu.arch.isWasm();
     if (is_wasm and backend == .luajit) {
@@ -22,11 +22,11 @@ pub fn build(b: *std.Build) void {
     }
     if (target.result.cpu.arch == .wasm32 and target.result.os.tag == .emscripten) {
         var query = target.query;
-        const exceptions = @intFromEnum(std.Target.wasm.Feature.exception_handling);
+        const exceptions = @backingInt(std.Target.wasm.Feature.exception_handling);
         query.cpu_features_add.addFeature(exceptions);
         query.cpu_features_sub.removeFeature(exceptions);
         target = b.resolveTargetQuery(query);
-        buildWasm(b, target, optimize, linkage);
+        try buildWasm(b, target, optimize, linkage);
         return;
     }
     // Reject unsupported targets before resolving the lazy libffi dependency.
@@ -43,11 +43,11 @@ pub fn build(b: *std.Build) void {
         .backend = backend,
         .linkage = linkage,
     });
-    const ffi_dep = b.lazyDependency("libffi", .{
+    const ffi_dep = try b.dependencyLazy("libffi", .{
         .target = target,
         .optimize = optimize,
         .linkage = linkage,
-    }) orelse return;
+    });
     const module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -72,7 +72,7 @@ pub fn build(b: *std.Build) void {
     b.default_step.dependOn(check);
 }
 
-fn buildWasm(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, linkage: std.builtin.LinkMode) void {
+fn buildWasm(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.lang.Optimize, linkage: std.lang.LinkMode) !void {
     const emscripten = (b.lazyImport(@This(), "zlua") orelse return).emscripten;
     if (linkage != .static)
         @panic("zlua libffi wasm: only -Dlinkage=static is supported");
@@ -89,11 +89,11 @@ fn buildWasm(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     });
     // Upstream's build lacks a wasm selector. Resolve a supported graph solely
     // to access the immutable package; no host artifact or headers are linked.
-    const ffi_dep = b.lazyDependency("libffi", .{
+    const ffi_dep = try b.dependencyLazy("libffi", .{
         .target = b.resolveTargetQuery(.{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .gnu }),
         .optimize = optimize,
         .linkage = .static,
-    }) orelse return;
+    });
     const ffi = wasm_ffi.create(b, emscripten, ffi_dep, target, optimize, sysroot);
     const module = b.createModule(.{
         .root_source_file = b.path("src/wasm.zig"),
@@ -110,7 +110,6 @@ fn buildWasm(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
         .name = "zlua-libffi-wasm-scenario",
         .linkage = .static,
         .root_module = module,
-        .zig_lib_dir = emscripten.prepareZigLib(b),
     });
     library.bundle_compiler_rt = true;
     const link = b.addSystemCommand(&.{emcc});

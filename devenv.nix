@@ -1,7 +1,8 @@
-{ pkgs, lib, ... }:
+{ pkgs, lib, inputs, ... }:
 
 let
-  zig = pkgs.zig_0_16;
+  zigPkgs = import inputs.nixpkgs-unstable { system = pkgs.stdenv.hostPlatform.system; };
+  zig = zigPkgs.zig_0_17;
   projectRoot = lib.escapeShellArg (builtins.toString ./.);
 
   # Runtime configuration preserves caller settings and never builds either SDK.
@@ -32,8 +33,8 @@ in
     ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.util-linux pkgs.glibcLocales pkgs.readline ];
 
   assertions = [{
-    assertion = zig.version == "0.16.0";
-    message = "zlua requires Zig 0.16.0, but nixpkgs provides ${zig.version}.";
+    assertion = zig.version == "0.17.0";
+    message = "zlua requires Zig 0.17.0, but nixpkgs provides ${zig.version}.";
   }];
 
   env = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {

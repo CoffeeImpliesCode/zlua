@@ -11,7 +11,7 @@ pub const c = native.c;
 /// Runtime selected by `-Dbackend`; Lua is the default.
 pub const Backend = enum { lua, luajit };
 /// Compile-time identity of the linked runtime.
-pub const backend: Backend = @enumFromInt(@intFromEnum(build_options.backend));
+pub const backend: Backend = @fromBackingInt(@intCast(@backingInt(build_options.backend)));
 
 /// Protected compilation and execution failures; the error object stays on the stack.
 pub const Error = error{

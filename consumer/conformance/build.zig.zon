@@ -2,14 +2,14 @@
     .name = .zlua_conformance,
     .fingerprint = 0xb07111e2c62f295e,
     .version = "0.1.0",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
-        .zlua = .{ .path = "../.." },
+        .zlua = .{ .path = "zlua" },
         .lua_tests = .{
             .url = "https://www.lua.org/tests/lua-5.5.1-tests.tar.gz",
             .hash = "N-V-__8AAAB0CAAOnHCvc_1WGLR7MaydcICCeTgsrj6e5IhE",
             .lazy = true,
         },
     },
-    .paths = .{ "build.zig", "build.zig.zon", "src" },
+    .paths = .{ "build.zig", "build.zig.zon", "src", "zlua" },
 }

@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const backend = b.option(enum { lua, luajit }, "backend", "Lua runtime backend") orelse .lua;
-    const linkage = b.option(std.builtin.LinkMode, "linkage", "Native library linkage") orelse .static;
+    const linkage = b.option(std.lang.LinkMode, "linkage", "Native library linkage") orelse .static;
     const dependency = b.dependency("zlua", .{
         .target = target,
         .optimize = optimize,

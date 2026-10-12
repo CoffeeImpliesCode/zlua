@@ -3,12 +3,12 @@ pub const emscripten = @import("consumer/wasm/emscripten.zig");
 
 const Backend = enum { lua, luajit };
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const backend = b.option(Backend, "backend", "Lua runtime: lua (default) or luajit") orelse .lua;
     const linkage = b.option(
-        std.builtin.LinkMode,
+        std.lang.LinkMode,
         "linkage",
         "Native library linkage: static (default) or dynamic",
     ) orelse .static;
@@ -35,18 +35,18 @@ pub fn build(b: *std.Build) void {
     );
 
     const dependency_name = @tagName(backend);
-    const dependency = switch (backend) {
-        .lua => b.lazyDependency("lua", .{
+    const dependency = try switch (backend) {
+        .lua => b.dependencyLazy("lua", .{
             .target = target,
             .optimize = optimize,
             .linkage = linkage,
         }),
-        .luajit => b.lazyDependency("luajit", .{
+        .luajit => b.dependencyLazy("luajit", .{
             .target = target,
             .optimize = optimize,
             .linkage = linkage,
         }),
-    } orelse return;
+    };
     if (emscripten_sysroot) |sysroot| {
         if (target.result.os.tag == .emscripten and backend == .lua) {
             const include: std.Build.LazyPath = .{
@@ -67,11 +67,11 @@ pub fn build(b: *std.Build) void {
             native_module.addSystemIncludePath(include);
             archive.root_module.addSystemIncludePath(include);
 
-            // TranslateC has no libc-file option in Zig 0.16. Use the SDK's
+            // TranslateC has no libc-file option. Use the SDK's
             // existing translation step; never duplicate its C source graph.
             const bindings = native_module.import_table.get("c") orelse unreachable;
             const generated = bindings.root_source_file.?.generated;
-            const translate = generated.file.step.cast(std.Build.Step.TranslateC).?;
+            const translate = b.graph.generated_files.items[@backingInt(generated.index)].cast(std.Build.Step.TranslateC).?;
             translate.addSystemIncludePath(include);
 
             // emcc cannot rewrite setjmp in precompiled wasm objects. Compile

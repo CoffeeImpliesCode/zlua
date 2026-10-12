@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Private GitHub sources are downloaded through gh; Zig 0.16 does not fetch
+# Private GitHub sources are downloaded through gh; Zig's native fetcher does not fetch
 # SSH URLs or use Git credential helpers for its native HTTPS fetcher.
 caller_global_cache=${ZIG_GLOBAL_CACHE_DIR-}
 caller_local_cache=${ZIG_LOCAL_CACHE_DIR-}
+caller_package_directory=${ZIG_LOCAL_PKG_DIR-}
 if [[ -f "$HOME/.local/lib/host-scratch.sh" ]]; then
     source "$HOME/.local/lib/host-scratch.sh"
 fi
 [[ -z "$caller_global_cache" ]] || export ZIG_GLOBAL_CACHE_DIR="$caller_global_cache"
 [[ -z "$caller_local_cache" ]] || export ZIG_LOCAL_CACHE_DIR="$caller_local_cache"
+[[ -z "$caller_package_directory" ]] || export ZIG_LOCAL_PKG_DIR="$caller_package_directory"
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 backend=${1:-all}
 case "$backend" in lua|luajit|all|integration|conformance) ;; *) echo 'usage: bash tools/fetch-deps.sh [lua|luajit|all|integration|conformance]' >&2; exit 2 ;; esac
@@ -86,7 +88,7 @@ prepare_directory() {
 }
 local_directory "$scratch"
 command -v gh >/dev/null || { echo 'GitHub CLI gh is required; authenticate with gh auth login or GH_TOKEN.' >&2; exit 1; }
-command -v zig >/dev/null || { echo 'Zig 0.16.0 is required.' >&2; exit 1; }
+command -v zig >/dev/null || { echo 'Zig 0.17.0 is required.' >&2; exit 1; }
 gh auth status >/dev/null 2>&1 || { echo 'No authenticated GitHub identity; provide a read-only token authorized for both private dependency repositories.' >&2; exit 1; }
 work=$(mktemp -d "$scratch/zlua-fetch.XXXXXXXX")
 # Failure diagnostics are retained. Success cleanup touches only regular files
@@ -98,22 +100,29 @@ export ZIG_LOCAL_CACHE_DIR=${ZIG_LOCAL_CACHE_DIR:-$scratch/zlua-zig-local}
 for directory in "$ZIG_GLOBAL_CACHE_DIR" "$ZIG_LOCAL_CACHE_DIR"; do
     prepare_directory "$directory"
 done
-if [[ -e "$root/zig-pkg" || -L "$root/zig-pkg" ]]; then
-    local_directory "$root/zig-pkg"
-    package_directory=$(cd -- "$root/zig-pkg" && pwd -P)
-else
-    package_directory=${ZLUA_CACHE_ROOT:+$ZLUA_CACHE_ROOT/pkg}
-    package_directory=${package_directory:-$scratch/zlua-zig-pkg}
-    prepare_directory "$package_directory"
-fi
-for package_root in "$root" "$root/consumer/smoke" "$root/consumer/wasm" "$root/consumer/libffi" "$root/consumer/conformance"; do
-    [[ -d "$package_root" ]] || continue
-    [[ -d "$package_root" && -O "$package_root" ]] || { echo "Unsafe package root: $package_root" >&2; exit 1; }
-    if [[ ! -e "$package_root/zig-pkg" && ! -L "$package_root/zig-pkg" ]]; then
-        ln -s -- "$package_directory" "$package_root/zig-pkg"
-    fi
-    local_directory "$package_root/zig-pkg"
-done
+# Zig 0.17 selects the package cache through its environment, not checkout links.
+package_directory=${ZIG_LOCAL_PKG_DIR:-${ZLUA_CACHE_ROOT:+$ZLUA_CACHE_ROOT/pkg}}
+package_directory=${package_directory:-$scratch/zlua-zig-pkg}
+prepare_directory "$package_directory"
+export ZIG_LOCAL_PKG_DIR="$package_directory"
+# Stock fetch only unpacks to the local package directory with --save. Keep its
+# manifest edits in private scratch; the repository's git URLs stay unchanged.
+cp -- "$root/build.zig" "$root/build.zig.zon" "$work/"
+fetch_package() {
+    (cd -- "$work" && zig fetch "--save-exact=$1" --pkg-dir "$package_directory" "$2") || return
+    local name_pattern="^[[:space:]]*[.]$1[[:space:]]*=[[:space:]]*[.][{]"
+    local selected=0 line
+    while IFS= read -r line; do
+        if [[ "$line" =~ $name_pattern ]]; then
+            selected=1
+        elif [[ "$selected" == 1 && "$line" =~ $hash_pattern ]]; then
+            printf '%s\n' "${BASH_REMATCH[1]}"
+            return
+        fi
+    done < "$work/build.zig.zon"
+    echo "Saved dependency hash missing for $1." >&2
+    return 1
+}
 url_pattern='^[[:space:]]*\.url[[:space:]]*=[[:space:]]*"git\+https://github\.com/(CoffeeImpliesCode/(lua|luajit))\.git#([0-9a-f]{40})",[[:space:]]*$'
 hash_pattern='^[[:space:]]*\.hash[[:space:]]*=[[:space:]]*"([^"]+)",[[:space:]]*$'
 repository='' revision='' count=0
@@ -129,7 +138,7 @@ while IFS= read -r line; do
             archive="$work/$name.tar.gz"
             echo "Fetching $repository at $revision" >&2
             gh api "repos/$repository/tarball/$revision" > "$archive"
-            actual=$(cd -- "$root" && zig fetch "$archive")
+            actual=$(fetch_package "$name" "$archive")
             if [[ "$actual" != "$expected" ]]; then
                 printf 'Dependency hash mismatch for %s: expected %s, received %s\n' "$name" "$expected" "$actual" >&2
                 exit 1
@@ -157,7 +166,7 @@ if [[ "$backend" == integration ]]; then
         fi
     done < "$ffi_manifest"
     [[ -n "$ffi_url" && -n "$ffi_hash" ]] || { echo 'Missing immutable libffi URL/hash pair.' >&2; exit 1; }
-    actual=$(cd -- "$root" && zig fetch "$ffi_url")
+    actual=$(fetch_package libffi "$ffi_url")
     [[ "$actual" == "$ffi_hash" ]] || { echo "Dependency hash mismatch for libffi: expected=$ffi_hash actual=$actual" >&2; exit 1; }
     count=$((count + 1))
 fi
@@ -173,22 +182,22 @@ if [[ "$backend" == integration || "$backend" == conformance ]]; then
         fi
     done < "$suite_manifest"
     [[ -n "$suite_url" && -n "$suite_hash" ]] || { echo 'Missing pinned official Lua test-suite URL/hash pair.' >&2; exit 1; }
-    actual=$(cd -- "$root" && zig fetch "$suite_url")
+    actual=$(fetch_package lua_tests "$suite_url")
     [[ "$actual" == "$suite_hash" ]] || { echo "Dependency hash mismatch for Lua tests: expected=$suite_hash actual=$actual" >&2; exit 1; }
     count=$((count + 1))
 fi
-for archive in "$work/lua.tar.gz" "$work/luajit.tar.gz"; do
-    [[ -e "$archive" ]] || continue
-    if [[ -f "$archive" && -O "$archive" && ! -L "$archive" ]] && command -v lsof >/dev/null && ! lsof -- "$archive" >/dev/null 2>&1; then
-        if ! command -v mountpoint >/dev/null || ! mountpoint -q -- "$archive"; then
-            unlink -- "$archive"
+for file in "$work/lua.tar.gz" "$work/luajit.tar.gz" "$work/build.zig" "$work/build.zig.zon"; do
+    [[ -e "$file" ]] || continue
+    if [[ -f "$file" && -O "$file" && ! -L "$file" ]] && command -v lsof >/dev/null && ! lsof -- "$file" >/dev/null 2>&1; then
+        if ! command -v mountpoint >/dev/null || ! mountpoint -q -- "$file"; then
+            unlink -- "$file"
         fi
     else
-        printf 'Retaining diagnostic archive; cleanup safety could not be established: %s\n' "$archive" >&2
+        printf 'Retaining diagnostic file; cleanup safety could not be established: %s\n' "$file" >&2
     fi
 done
 if [[ -d "$work" && -O "$work" && ! -L "$work" ]]; then
     rmdir -- "$work" 2>/dev/null || true
 fi
 printf 'Verified %s immutable dependency package(s); cache=%s\n' "$count" "$ZIG_GLOBAL_CACHE_DIR"
-printf 'For subsequent builds use: export ZIG_GLOBAL_CACHE_DIR=%q ZIG_LOCAL_CACHE_DIR=%q\n' "$ZIG_GLOBAL_CACHE_DIR" "$ZIG_LOCAL_CACHE_DIR"
+printf 'For subsequent builds use: export ZIG_GLOBAL_CACHE_DIR=%q ZIG_LOCAL_CACHE_DIR=%q ZIG_LOCAL_PKG_DIR=%q\n' "$ZIG_GLOBAL_CACHE_DIR" "$ZIG_LOCAL_CACHE_DIR" "$ZIG_LOCAL_PKG_DIR"

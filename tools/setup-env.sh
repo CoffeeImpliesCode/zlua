@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Source from .envrc before invoking devenv, and from the generated shell/tasks.
 # Bash 3.2-compatible: caller data travels as values, never evaluated shell text.
-zlua_cache_variables='ZLUA_CACHE_ROOT XDG_CACHE_HOME ZIG_LOCAL_CACHE_DIR ZIG_GLOBAL_CACHE_DIR EM_CACHE GATE_CACHE_DIR GATE_CROSS_OUTPUT UV_CACHE_DIR PIP_CACHE_DIR npm_config_cache BUN_INSTALL_CACHE_DIR CCACHE_DIR GOCACHE GOMODCACHE CARGO_TARGET_DIR APPTAINER_CACHEDIR APPTAINER_TMPDIR TMPDIR TMP TEMP'
+zlua_cache_variables='ZLUA_CACHE_ROOT XDG_CACHE_HOME ZIG_LOCAL_CACHE_DIR ZIG_GLOBAL_CACHE_DIR ZIG_LOCAL_PKG_DIR EM_CACHE GATE_CACHE_DIR GATE_CROSS_OUTPUT UV_CACHE_DIR PIP_CACHE_DIR npm_config_cache BUN_INSTALL_CACHE_DIR CCACHE_DIR GOCACHE GOMODCACHE CARGO_TARGET_DIR APPTAINER_CACHEDIR APPTAINER_TMPDIR TMPDIR TMP TEMP'
 
 zlua_capture_caller() {
   local name marker
@@ -125,6 +125,7 @@ zlua_setup() {
   fi
   export ZIG_LOCAL_CACHE_DIR="${ZIG_LOCAL_CACHE_DIR:-$ZLUA_CACHE_ROOT/build}"
   export ZIG_GLOBAL_CACHE_DIR="${ZIG_GLOBAL_CACHE_DIR:-$ZLUA_CACHE_ROOT/global}"
+  export ZIG_LOCAL_PKG_DIR="${ZIG_LOCAL_PKG_DIR:-$ZLUA_CACHE_ROOT/pkg}"
   export EM_CACHE="${EM_CACHE:-$ZLUA_CACHE_ROOT/emscripten}"
   export GATE_CACHE_DIR="${GATE_CACHE_DIR:-$ZLUA_CACHE_ROOT/gate}"
   export GATE_CROSS_OUTPUT="${GATE_CROSS_OUTPUT:-$ZLUA_CACHE_ROOT/cross-test}"
@@ -138,12 +139,11 @@ zlua_setup() {
       zlua_local_directory "${!name}" || return 1
     fi
   done
-  for name in .devenv .direnv .zig-cache zig-pkg; do
+  for name in .devenv .direnv .zig-cache; do
     case "$name" in
       .devenv) target="$ZLUA_CACHE_ROOT/devenv" ;;
       .direnv) target="$ZLUA_CACHE_ROOT/direnv" ;;
       .zig-cache) target="$ZIG_LOCAL_CACHE_DIR" ;;
-      zig-pkg) target="$ZLUA_CACHE_ROOT/pkg" ;;
     esac
     path="$zlua_root/$name"
     if [ -L "$path" ]; then

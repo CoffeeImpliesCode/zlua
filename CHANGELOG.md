@@ -2,9 +2,21 @@
 
 ## Unreleased
 
+### Changed
+
+- Require Zig 0.17.0 and select its stock Nix package from a pinned nixos-unstable input.
+- Port package and consumer build graphs to the configure/make split and migrate enum conversions.
+- Preserve the common State API and runtime versions while selecting approved Zig 0.17 Lua/LuaJIT fork commits.
+- Use `ZIG_LOCAL_PKG_DIR` directly for package caches; remove obsolete cache-link/junction setup without modifying existing user cache links.
+- Prime verified sources with stock `zig fetch --save-exact` in a scratch manifest, preserving repository git URLs and avoiding archive-only cache imports.
+
+### Known blockers
+
+- The optional libffi consumer retains its immutable 3.8.0 SDK pin. On Zig 0.17, `build.zig:26` fails because `Fmt.Options.paths` now expects `Build.LazyPath`, not strings; after that migration, `build.zig:262` cannot compare optional `?u16` C ABI sizes. Its bindings also need optional C ABI size handling. The scratch-only proof port was not pushed or repinned. Core zlua does not depend on libffi.
+
 ### Added
 
-- Zig 0.16.0 package with one build-selected Lua or LuaJIT runtime.
+- Zig 0.17.0 package with one build-selected Lua or LuaJIT runtime.
 - Immutable private source pins for Lua 5.5.1 and LuaJIT 2.1.1788856981.
 - Common `State` operations for state lifetime, stacks, text compilation, protected calls, globals, callbacks, and scalar values.
 - Selected upstream SDK through `native`, its C bindings through `c`, and compile-time backend identity through `backend`.

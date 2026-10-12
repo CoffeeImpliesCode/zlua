@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 env:
-  ZIG_VERSION: 0.16.0
+  ZIG_VERSION: 0.17.0
   GIT_TERMINAL_PROMPT: '0'
 
 jobs:
@@ -38,7 +38,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: CoffeeImpliesCode/lua
-          ref: 5342c6165ee19b55e434f450e428cf9678a8f9b1
+          ref: bde3a070943d5faa03aef1bb143e01a0efe5f837
           token: ${{ secrets.ZLUA_DEPENDENCIES_TOKEN }}
           persist-credentials: false
           path: .ci-deps/lua
@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: CoffeeImpliesCode/luajit
-          ref: 77549354eafa3a467fd30d8410b68bf9393b8dcf
+          ref: 6cfaae21afbe113c5310f40495cc15add1e38d68
           token: ${{ secrets.ZLUA_DEPENDENCIES_TOKEN }}
           persist-credentials: false
           path: .ci-deps/luajit
@@ -55,18 +55,6 @@ jobs:
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
           version: ${{ env.ZIG_VERSION }}
-      - name: Place Windows package caches outside the checkout
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $target = Join-Path $env:RUNNER_TEMP "zlua-zig-pkg"
-          New-Item -ItemType Directory -Path $target -Force | Out-Null
-          foreach ($relative in @("zig-pkg", "consumer/smoke/zig-pkg", "consumer/libffi/zig-pkg", "consumer/wasm/zig-pkg", "consumer/conformance/zig-pkg")) {
-            $path = Join-Path $env:GITHUB_WORKSPACE $relative
-            if (Test-Path -LiteralPath $path) { throw "Unexpected existing package cache: $path" }
-            New-Item -ItemType Junction -Path $path -Target $target | Out-Null
-          }
       - &prime
         name: Prime Zig packages and verify manifest hashes
         shell: bash
@@ -75,20 +63,21 @@ jobs:
           local_cache="$RUNNER_TEMP/zlua-zig-local"
           packages="$RUNNER_TEMP/zlua-zig-pkg"
           mkdir -p "$cache" "$local_cache" "$packages"
-          if [[ "$RUNNER_OS" != Windows ]]; then
-            for package_root in . consumer/smoke consumer/libffi consumer/wasm consumer/conformance; do
-              if [[ -e "$package_root/zig-pkg" || -L "$package_root/zig-pkg" ]]; then
-                echo "::error::Unexpected existing package cache: $package_root/zig-pkg"
-                exit 1
-              fi
-              ln -s "$packages" "$package_root/zig-pkg"
-            done
-          fi
-          printf 'ZIG_GLOBAL_CACHE_DIR=%s\nZIG_LOCAL_CACHE_DIR=%s\n' "$cache" "$local_cache" >> "$GITHUB_ENV"
-          export ZIG_GLOBAL_CACHE_DIR="$cache" ZIG_LOCAL_CACHE_DIR="$local_cache"
+          printf 'ZIG_GLOBAL_CACHE_DIR=%s\nZIG_LOCAL_CACHE_DIR=%s\nZIG_LOCAL_PKG_DIR=%s\n' "$cache" "$local_cache" "$packages" >> "$GITHUB_ENV"
+          export ZIG_GLOBAL_CACHE_DIR="$cache" ZIG_LOCAL_CACHE_DIR="$local_cache" ZIG_LOCAL_PKG_DIR="$packages"
+          fetch_context="$RUNNER_TEMP/zlua-fetch-context"
+          mkdir -p "$fetch_context"
+          cp build.zig build.zig.zon "$fetch_context/"
           hash_pattern='^[[:space:]]*\.hash[[:space:]]*=[[:space:]]*"([^"]+)",[[:space:]]*$'
           for backend in lua luajit; do
-            actual=$(zig fetch ".ci-deps/$backend")
+            (cd "$fetch_context" && zig fetch "--save-exact=$backend" "$GITHUB_WORKSPACE/.ci-deps/$backend")
+            actual=
+            while IFS= read -r line; do
+              if [[ "$line" =~ $hash_pattern ]]; then
+                candidate=${BASH_REMATCH[1]}
+                if [[ "$candidate" == "$backend-"* ]]; then actual=$candidate; fi
+              fi
+            done < "$fetch_context/build.zig.zon"
             expected=
             while IFS= read -r line; do
               if [[ "$line" =~ $hash_pattern ]]; then
