@@ -5,13 +5,13 @@
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .lua = .{
-            .url = "git+https://github.com/CoffeeImpliesCode/lua.git#bde3a070943d5faa03aef1bb143e01a0efe5f837",
-            .hash = "lua-5.5.1-0wo8CGyRHwBD9mWf9-90oH-gVtwHtKUU-OB6lUK2pFa5",
+            .url = "git+https://github.com/CoffeeImpliesCode/lua?ref=v5.5.1#46fd544d3f74cda23215d5c0ebfc79c596a73c2b",
+            .hash = "lua-5.5.1-0wo8CAqbGQBK3JxsRt6yavnBCPMBXgf1wivzJGqwo2vV",
             .lazy = true,
         },
         .luajit = .{
-            .url = "git+https://github.com/CoffeeImpliesCode/luajit.git#6cfaae21afbe113c5310f40495cc15add1e38d68",
-            .hash = "luajit-2.1.1788856981-Jcr51gaQTwApWQTadld8kXcvzkEukat4qYgX-mJJu0sl",
+            .url = "git+https://github.com/CoffeeImpliesCode/luajit?ref=v2.1.1788856981#decff7da06538793179f42c6d5e93dd4de86fd4d",
+            .hash = "luajit-2.1.1788856981-Jcr51rRzSQDDtxilWYS0yX4qqGxedIqfAy8UOlAUFnvc",
             .lazy = true,
         },
     },

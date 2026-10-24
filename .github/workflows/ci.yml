@@ -23,32 +23,20 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - &credential
-        name: Require private dependency read-only token
-        shell: bash
-        env:
-          DEPENDENCY_TOKEN: ${{ secrets.ZLUA_DEPENDENCIES_TOKEN }}
-        run: |
-          if [[ -z "$DEPENDENCY_TOKEN" ]]; then
-            echo '::error::Missing ZLUA_DEPENDENCIES_TOKEN. Supply a read-only contents token authorized for CoffeeImpliesCode/lua and CoffeeImpliesCode/luajit. Fork PRs cannot access this secret.'
-            exit 1
-          fi
       - &lua
-        name: Check out immutable private Lua source
+        name: Check out immutable Lua source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: CoffeeImpliesCode/lua
-          ref: bde3a070943d5faa03aef1bb143e01a0efe5f837
-          token: ${{ secrets.ZLUA_DEPENDENCIES_TOKEN }}
+          ref: 46fd544d3f74cda23215d5c0ebfc79c596a73c2b
           persist-credentials: false
           path: .ci-deps/lua
       - &luajit
-        name: Check out immutable private LuaJIT source
+        name: Check out immutable LuaJIT source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: CoffeeImpliesCode/luajit
-          ref: 6cfaae21afbe113c5310f40495cc15add1e38d68
-          token: ${{ secrets.ZLUA_DEPENDENCIES_TOKEN }}
+          ref: decff7da06538793179f42c6d5e93dd4de86fd4d
           persist-credentials: false
           path: .ci-deps/luajit
       - &zig
@@ -126,7 +114,6 @@ jobs:
         linkage: [static, dynamic]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - *credential
       - *lua
       - *luajit
       - *zig
@@ -170,7 +157,6 @@ jobs:
           - { backend: lua, optimize: ReleaseSafe, target: riscv64-linux-gnu }
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - *credential
       - *lua
       - *luajit
       - *zig
@@ -237,7 +223,6 @@ jobs:
         optimize: [Debug, ReleaseSafe]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - *credential
       - *lua
       - *luajit
       - *zig

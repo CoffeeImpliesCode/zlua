@@ -1,14 +1,16 @@
-{ pkgs, lib, inputs, ... }:
+{ pkgs, lib, ... }:
 
 let
-  zigPkgs = import inputs.nixpkgs-unstable { system = pkgs.stdenv.hostPlatform.system; };
-  zig = zigPkgs.zig_0_17;
   projectRoot = lib.escapeShellArg (builtins.toString ./.);
 
   # Runtime configuration preserves caller settings and never builds either SDK.
   setup = ''
     ${builtins.readFile ./tools/setup-env.sh}
     zlua_setup ${projectRoot} || exit 1
+    if [ "$(zig version)" != "0.17.0" ]; then
+      echo "zlua requires Zig 0.17.0 on PATH" >&2
+      exit 1
+    fi
     unset -f zlua_setup zlua_capture_caller zlua_restore_caller \
       zlua_resolve_directory zlua_local_directory
     unset zlua_cache_variables
@@ -29,13 +31,8 @@ let
   }) [ "test" "smoke" "check" ]);
 in
 {
-  packages = [ zig pkgs.jujutsu pkgs.git pkgs.gh pkgs.coreutils pkgs.emscripten pkgs.nodejs-slim ]
+  packages = [ pkgs.jujutsu pkgs.git pkgs.coreutils pkgs.emscripten pkgs.nodejs-slim ]
     ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.util-linux pkgs.glibcLocales pkgs.readline ];
-
-  assertions = [{
-    assertion = zig.version == "0.17.0";
-    message = "zlua requires Zig 0.17.0, but nixpkgs provides ${zig.version}.";
-  }];
 
   env = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
     LOCALE_ARCHIVE = lib.mkDefault "${pkgs.glibcLocales}/lib/locale/locale-archive";

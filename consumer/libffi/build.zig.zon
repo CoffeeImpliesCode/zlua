@@ -6,8 +6,8 @@
     .dependencies = .{
         .zlua = .{ .path = "zlua" },
         .libffi = .{
-            .url = "git+https://codeberg.org/CoffeeImpliesCode/libffi#58673112b522a80232071653a8d0173d2fdcf7e3",
-            .hash = "libffi-3.8.0-7_tEtP83GQAndlwNyba1557yRttl0MapjX_M3f1WcLgq",
+            .url = "git+https://codeberg.org/CoffeeImpliesCode/libffi#e101f7894db1cd6b2734103ecd6db9badd5a9ed3",
+            .hash = "libffi-3.8.0-7_tEtEA6GQAepwTYbjbh7-7kl0lSqZzselVgKHGhbQEz",
             .lazy = true,
         },
     },

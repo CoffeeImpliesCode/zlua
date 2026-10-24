@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Private GitHub sources are downloaded through gh; Zig's native fetcher does not fetch
-# SSH URLs or use Git credential helpers for its native HTTPS fetcher.
 caller_global_cache=${ZIG_GLOBAL_CACHE_DIR-}
 caller_local_cache=${ZIG_LOCAL_CACHE_DIR-}
 caller_package_directory=${ZIG_LOCAL_PKG_DIR-}
@@ -87,9 +85,7 @@ prepare_directory() {
     local_directory "$directory"
 }
 local_directory "$scratch"
-command -v gh >/dev/null || { echo 'GitHub CLI gh is required; authenticate with gh auth login or GH_TOKEN.' >&2; exit 1; }
 command -v zig >/dev/null || { echo 'Zig 0.17.0 is required.' >&2; exit 1; }
-gh auth status >/dev/null 2>&1 || { echo 'No authenticated GitHub identity; provide a read-only token authorized for both private dependency repositories.' >&2; exit 1; }
 work=$(mktemp -d "$scratch/zlua-fetch.XXXXXXXX")
 # Failure diagnostics are retained. Success cleanup touches only regular files
 # created in this private work directory, never recursive trees or shared caches.
@@ -123,34 +119,31 @@ fetch_package() {
     echo "Saved dependency hash missing for $1." >&2
     return 1
 }
-url_pattern='^[[:space:]]*\.url[[:space:]]*=[[:space:]]*"git\+https://github\.com/(CoffeeImpliesCode/(lua|luajit))\.git#([0-9a-f]{40})",[[:space:]]*$'
+url_pattern='^[[:space:]]*\.url[[:space:]]*=[[:space:]]*"(git\+https://github\.com/CoffeeImpliesCode/(lua|luajit)(\?ref=[^"#]+)?#[0-9a-f]{40})",[[:space:]]*$'
 hash_pattern='^[[:space:]]*\.hash[[:space:]]*=[[:space:]]*"([^"]+)",[[:space:]]*$'
-repository='' revision='' count=0
+url='' count=0
 while IFS= read -r line; do
     if [[ "$line" =~ $url_pattern ]]; then
-        [[ -z "$repository" ]] || { echo 'Manifest URL without following hash.' >&2; exit 1; }
-        repository=${BASH_REMATCH[1]}
+        [[ -z "$url" ]] || { echo 'Manifest URL without following hash.' >&2; exit 1; }
+        url=${BASH_REMATCH[1]}
         name=${BASH_REMATCH[2]}
-        revision=${BASH_REMATCH[3]}
-    elif [[ "$line" =~ $hash_pattern && -n "$repository" ]]; then
+    elif [[ "$line" =~ $hash_pattern && -n "$url" ]]; then
         expected=${BASH_REMATCH[1]}
         if [[ "$backend" == all || "$backend" == integration || "$backend" == "$name" || ( "$backend" == conformance && "$name" == lua ) ]]; then
-            archive="$work/$name.tar.gz"
-            echo "Fetching $repository at $revision" >&2
-            gh api "repos/$repository/tarball/$revision" > "$archive"
-            actual=$(fetch_package "$name" "$archive")
+            echo "Fetching $name at $url" >&2
+            actual=$(fetch_package "$name" "$url")
             if [[ "$actual" != "$expected" ]]; then
                 printf 'Dependency hash mismatch for %s: expected %s, received %s\n' "$name" "$expected" "$actual" >&2
                 exit 1
             fi
             count=$((count + 1))
         fi
-        repository='' revision=''
+        url=''
     fi
 done < "$root/build.zig.zon"
 expected_count=1
 [[ "$backend" != all && "$backend" != integration ]] || expected_count=2
-if [[ "$count" -ne "$expected_count" || -n "$repository" ]]; then
+if [[ "$count" -ne "$expected_count" || -n "$url" ]]; then
     echo 'Manifest must contain immutable git+https GitHub URL/hash pairs for requested dependencies.' >&2
     exit 1
 fi
@@ -186,7 +179,7 @@ if [[ "$backend" == integration || "$backend" == conformance ]]; then
     [[ "$actual" == "$suite_hash" ]] || { echo "Dependency hash mismatch for Lua tests: expected=$suite_hash actual=$actual" >&2; exit 1; }
     count=$((count + 1))
 fi
-for file in "$work/lua.tar.gz" "$work/luajit.tar.gz" "$work/build.zig" "$work/build.zig.zon"; do
+for file in "$work/build.zig" "$work/build.zig.zon"; do
     [[ -e "$file" ]] || continue
     if [[ -f "$file" && -O "$file" && ! -L "$file" ]] && command -v lsof >/dev/null && ! lsof -- "$file" >/dev/null 2>&1; then
         if ! command -v mountpoint >/dev/null || ! mountpoint -q -- "$file"; then
