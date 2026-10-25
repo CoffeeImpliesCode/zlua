@@ -19,11 +19,9 @@
 - Package tests, smoke program, standalone consumer, official Lua conformance consumer, and Emscripten/Node consumer.
 - Optional libffi call and closure consumer, including LuaJIT built-in FFI roundtrips and exact signed 64-bit results.
 - CI declarations for native Linux, macOS, Windows, cross-compilation, and unsupported-target checks.
+- Add an MIT license for first-party zlua code; separately fetched Lua, LuaJIT, and conformance-suite materials retain their upstream terms.
 
 ### Fixed
 
 - Keep parsing and LuaJIT result transfer inside protected calls so allocation failures do not escape through Zig frames.
 
-### Known limitations
-
-- No project license has been chosen. Dependencies retain their upstream terms.

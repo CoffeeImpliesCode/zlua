@@ -50,7 +50,8 @@ devenv "${zlua_devenv_options[@]}" shell
 
 Set `ZLUA_CACHE_ROOT` on local storage when the host does not supply cache settings.
 The optional `tools/fetch-deps.sh [lua|luajit|all|conformance|integration]` primes packages and checks manifest hashes.
-It requires an existing, absolute, user-owned `ZLUA_SCRATCH_ROOT` outside system temporary storage and the checkout.
+It selects scratch storage from `ZLUA_SCRATCH_ROOT`, then `RUNNER_TEMP`, then `TMPDIR` or `/tmp`.
+The selected root must be an existing, absolute, writable local directory outside the checkout; the helper creates a private directory when needed.
 Use its printed cache exports for subsequent builds. Normal Zig builds do not need this helper.
 
 ## Add the module
@@ -118,7 +119,8 @@ Do not let Lua `longjmp` cross Zig frames that need `defer` or `errdefer` cleanu
 ## Additional consumers
 
 - [`consumer/conformance`](consumer/conformance) runs the pinned official Lua 5.5.1 suite with `T`/`ltests` and five C fixtures.
-  It requires Linux, Bash, ELF shared libraries, readline, the `pt_BR` ISO-8859-1 locale, and local `TMPDIR` storage.
+  It requires Linux, Bash, ELF shared libraries, readline and the `pt_BR` ISO-8859-1 locale.
+  Scratch selection is `ZLUA_SCRATCH_ROOT`, then `RUNNER_TEMP`, then `TMPDIR` or `/tmp`; the runner retains its fresh suite directory there.
   Run `zig build check` or `zig build run` in that directory. LuaJIT cannot run this suite.
   The signal test requires `/bin/sh` to report a nested shell's HUP termination as a nonzero exit, not a signal.
   The suite sends Ctrl-C and SIGKILL to its own children. The runner retains its suite directory and `conformance.log`.
@@ -134,6 +136,4 @@ Do not let Lua `longjmp` cross Zig frames that need `defer` or `errdefer` cleanu
 
 ## License
 
-No project license has been chosen. This repository does not grant a project license.
-Lua and LuaJIT retain their upstream terms. The official test suite uses the [Lua MIT license](https://www.lua.org/license.html).
-Review dependency terms before distribution.
+MIT, see [LICENSE](LICENSE); separately fetched Lua 5.5.1, LuaJIT, and conformance-suite materials retain their upstream terms.
