@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 # Run a fresh copy: the official tests write files and invoke their interpreter.
 set -eu
-: "${TMPDIR:?Set TMPDIR to approved local scratch before running conformance}"
-zlua_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)
-source "$zlua_root/tools/setup-env.sh"
-zlua_host=$(hostname -s 2>/dev/null || uname -n)
-zlua_system=$(uname -s)
-zlua_user=${HOST_SCRATCH_USER:-${USER:-}}
-if [ -z "$zlua_user" ]; then zlua_user=$(id -un 2>/dev/null || id -u); fi
-# Use the shared locality/ownership/checkout policy without global setup changes.
-zlua_local_directory "$TMPDIR"
-TMPDIR=$(zlua_resolve_directory "$TMPDIR")
+scratch_root=${ZLUA_SCRATCH_ROOT:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}}
+case "$scratch_root" in /*) ;; *) echo 'Scratch root must be an absolute path.' >&2; exit 1 ;; esac
+[ -d "$scratch_root" ] && [ -w "$scratch_root" ] || {
+    echo 'Scratch root must be an existing writable directory.' >&2
+    exit 1
+}
+scratch_root=$(cd -- "$scratch_root" && pwd -P)
+export TMPDIR="$scratch_root"
 [ "$#" -eq 3 ] || { echo 'usage: run.sh WRAPPER SUITE CLI' >&2; exit 1; }
 wrapper=$1
 suite=$2

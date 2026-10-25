@@ -4,35 +4,30 @@ set -euo pipefail
 caller_global_cache=${ZIG_GLOBAL_CACHE_DIR-}
 caller_local_cache=${ZIG_LOCAL_CACHE_DIR-}
 caller_package_directory=${ZIG_LOCAL_PKG_DIR-}
-if [[ -f "$HOME/.local/lib/host-scratch.sh" ]]; then
-    source "$HOME/.local/lib/host-scratch.sh"
-fi
 [[ -z "$caller_global_cache" ]] || export ZIG_GLOBAL_CACHE_DIR="$caller_global_cache"
 [[ -z "$caller_local_cache" ]] || export ZIG_LOCAL_CACHE_DIR="$caller_local_cache"
 [[ -z "$caller_package_directory" ]] || export ZIG_LOCAL_PKG_DIR="$caller_package_directory"
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 backend=${1:-all}
 case "$backend" in lua|luajit|all|integration|conformance) ;; *) echo 'usage: bash tools/fetch-deps.sh [lua|luajit|all|integration|conformance]' >&2; exit 2 ;; esac
-scratch=${ZLUA_SCRATCH_ROOT:-${buildhost_SCRATCH_ROOT:-${RUNNER_TEMP:-}}}
-if [[ -z "$scratch" ]]; then
-    echo 'Set ZLUA_SCRATCH_ROOT to an approved UID-owned local scratch directory (not /tmp, /var/tmp, or NFS).' >&2
+scratch_root=${ZLUA_SCRATCH_ROOT:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}}
+case "$scratch_root" in /*) ;; *) echo 'Scratch root must be an absolute path.' >&2; exit 1 ;; esac
+if [[ ! -d "$scratch_root" || ! -w "$scratch_root" ]]; then
+    echo 'Scratch root must be an existing writable directory.' >&2
     exit 1
 fi
-
-is_system_temp() {
-    case "$1" in
-        /tmp|/tmp/*|/var/tmp|/var/tmp/*|/private/tmp|/private/tmp/*|/private/var/tmp|/private/var/tmp/*) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-case "$scratch" in /*) ;; *) echo 'Scratch path must be absolute.' >&2; exit 1 ;; esac
-if is_system_temp "$scratch"; then echo 'System temporary directories are prohibited.' >&2; exit 1; fi
+scratch_root=$(cd -- "$scratch_root" && pwd -P)
+if [[ -O "$scratch_root" ]]; then
+    scratch=$scratch_root
+else
+    [[ -k "$scratch_root" ]] || { echo 'Shared scratch root must have the sticky bit set.' >&2; exit 1; }
+    scratch=$(mktemp -d "$scratch_root/zlua-scratch.XXXXXXXX")
+fi
 if [[ ! -d "$scratch" || ! -O "$scratch" || -L "$scratch" ]]; then
-    echo 'Scratch must already exist, be UID-owned, and not be a symlink.' >&2
+    echo 'Scratch must be a real directory owned by the current user.' >&2
     exit 1
 fi
 scratch=$(cd -- "$scratch" && pwd -P)
-if is_system_temp "$scratch"; then echo 'Scratch resolves to a prohibited directory.' >&2; exit 1; fi
 local_directory() {
     local directory=$1 filesystem physical
     if [[ ! -d "$directory" || ! -O "$directory" ]]; then
@@ -42,26 +37,16 @@ local_directory() {
     case "$physical" in
         "$root"|"$root/"*) echo "Prohibited scratch/cache location: $physical" >&2; exit 1 ;;
     esac
-    if is_system_temp "$physical"; then echo "Prohibited scratch/cache location: $physical" >&2; exit 1; fi
-    case "$(hostname -s)" in
-        buildhost*)
-            [[ -n "${HOST_SCRATCH_ROOT:-}" ]] || { echo 'No approved buildhost scratch root.' >&2; exit 1; }
-            case "$physical/" in
-                "$HOST_SCRATCH_ROOT/"*) ;;
-                *) echo "Path is outside approved per-user scratch root: $physical" >&2; exit 1 ;;
-            esac ;;
-    esac
     case "$(uname -s)" in
         Linux) filesystem=$(stat -f -c %T -- "$physical") ;;
         Darwin) filesystem=$(/usr/bin/stat -f %T "$physical") ;;
         *) echo "Cannot verify local filesystem on $(uname -s): $physical" >&2; exit 1 ;;
     esac
     case "$filesystem" in
-        ext2/ext3|ext4|ext3|ext2|xfs|btrfs|zfs|f2fs|apfs|hfs) ;;
+        ext2/ext3|ext4|ext3|ext2|xfs|btrfs|zfs|f2fs|apfs|hfs|tmpfs) ;;
         *) echo "Unapproved or remote filesystem ($filesystem): $physical" >&2; exit 1 ;;
     esac
 }
-
 prepare_directory() {
     local directory=$1 ancestor=$1 component
     local missing=()

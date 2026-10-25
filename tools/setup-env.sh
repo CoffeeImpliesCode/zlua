@@ -63,13 +63,6 @@ zlua_local_directory() {
       printf 'zlua: refusing cache in system temporary storage or checkout: %s\n' "$resolved" >&2
       return 1 ;;
   esac
-  case "$zlua_host" in
-    buildhost*)
-      case "$resolved" in
-        /home/tmp/"$zlua_user"/*|/home/tmp2/"$zlua_user"/*|/vol/tmp/"$zlua_user"/*|/vol/tmp2/"$zlua_user"/*) ;;
-        *) printf 'zlua: cache is not under approved local user storage: %s\n' "$resolved" >&2; return 1 ;;
-      esac ;;
-  esac
   ancestor="$resolved"
   while [ ! -e "$ancestor" ]; do
     ancestor=${ancestor%/*}
@@ -93,7 +86,7 @@ zlua_local_directory() {
 }
 
 zlua_setup() {
-  local zlua_root zlua_host zlua_user zlua_system name marker path target resolved hash
+  local zlua_root zlua_system name marker path target resolved hash
   local -a saved_names saved_values
   saved_names=() saved_values=()
   zlua_root=$(cd -- "$1" && pwd -P) || return 1
@@ -104,9 +97,6 @@ zlua_setup() {
       saved_values[${#saved_values[@]}]="${!name}"
     fi
   done
-  if [ -r "$HOME/.local/lib/host-scratch.sh" ]; then
-    source "$HOME/.local/lib/host-scratch.sh" || return 1
-  fi
   for ((name=0; name<${#saved_names[@]}; name++)); do
     export "${saved_names[$name]}=${saved_values[$name]}"
   done
@@ -130,10 +120,6 @@ zlua_setup() {
   export GATE_CACHE_DIR="${GATE_CACHE_DIR:-$ZLUA_CACHE_ROOT/gate}"
   export GATE_CROSS_OUTPUT="${GATE_CROSS_OUTPUT:-$ZLUA_CACHE_ROOT/cross-test}"
   export GATE_EXCLUDE="${GATE_EXCLUDE:-/[.]zig-cache/ /zig-out/ /zig-pkg/ /.jj/ /.devenv/ /.direnv/}"
-  zlua_host=$(hostname -s 2>/dev/null || uname -n) || return 1
-  zlua_system=$(uname -s) || return 1
-  zlua_user=${HOST_SCRATCH_USER:-${USER:-}}
-  if [ -z "$zlua_user" ]; then zlua_user=$(id -un 2>/dev/null || id -u) || return 1; fi
   for name in $zlua_cache_variables; do
     if declare -p "$name" >/dev/null 2>&1; then
       zlua_local_directory "${!name}" || return 1
